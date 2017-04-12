@@ -34,8 +34,17 @@ Result GetMyScreenName(Handle handle, wchar_t *out)
 	return cmdbuf[1];
 }
 
+u64 swap_u64(u64 val)
+{
+    val = ((val << 8) & 0xFF00FF00FF00FF00ULL ) | ((val >> 8) & 0x00FF00FF00FF00FFULL );
+    val = ((val << 16) & 0xFFFF0000FFFF0000ULL ) | ((val >> 16) & 0x0000FFFF0000FFFFULL );
+    return (val << 32) | (val >> 32);
+}
+
 Result getEntryIndex(FS_Archive archive, u32 *index)
 {
+	u64 *buf;
+	u32 nb;
 	u32 *buffer = 0;
 	Handle manageFile = 0;
 	Result ret = FSUSER_OpenFile(&manageFile, archive, fsMakePath(PATH_ASCII, "/letter/manage.bin"), FS_OPEN_WRITE|FS_OPEN_READ, 0);
@@ -65,110 +74,34 @@ Result getEntryIndex(FS_Archive archive, u32 *index)
 	end:
 	if(!ret)
 	{
-		u32 *buf = &buffer[LETTER_LIST_OFFSET/sizeof(u32)];
-		u32 nb = buf[0];
-		u32 ids[nb];
-		memset(ids, 0, nb*sizeof(u32));
-		u32 max = 0;
-		for(int i = 0; i < nb; i++)
+		buf = (u64*)&buffer[LETTER_LIST_OFFSET/sizeof(u32)];
+		nb = buf[0];
+		if(nb == 0)
 		{
-			ids[i] = buf[0x20 + i*0x20];
-			if(max < ids[i])
-				max = ids[i];
+			printf("No letter found! Please create a letter before trying to install doodlebomb!\n");
+			ret = -1;
+			goto error;
 		}
 
-		bool present[max+1];
-		memset(present, false, (max+1)*sizeof(bool));
+		u64 max = 0;
+		u32 id = 0;
+
 		for(int i = 0; i < nb; i++)
-			present[ids[i]] = true;
+		{
+			u64 current = swap_u64(buf[0x8 + i*0x10 + 0x2]);
+			//printf("%16llX\n", current);
+			if(current > max)
+			{
+				max = current;
+				id = (u32)buf[0x8 + i*0x10 + 0x8];
+				//printf("%08lX\n", id);
+			}
+		}
 
-		int i;
-		for(i = 0; i < max+1 && present[i]; i++);
-
-		*index = i;
+		*index = id;
 	}
 
-	if(buffer) free(buffer);
-	FSFILE_Close(manageFile);
-	return ret;
-}
-
-Result addLetterEntry(FS_Archive archive, u32 index)
-{
-	u32 *buffer = 0;
-	Handle manageFile = 0;
-	Result ret = FSUSER_OpenFile(&manageFile, archive, fsMakePath(PATH_ASCII, "/letter/manage.bin"), FS_OPEN_WRITE|FS_OPEN_READ, 0);
-	if(ret)
-	{
-		printf("An error occured while opening manage.bin : %08lX\n", ret);
-		goto end;
-	}
-
-	u64 size = 0;
-	ret = FSFILE_GetSize(manageFile, &size);
-	if(ret)
-	{
-		printf("Failed to get manage.bin size : %08lX\n", ret);
-		goto end;
-	}
-
-	buffer = malloc(size);
-	u32 bytesRead = 0;
-	ret = FSFILE_Read(manageFile, &bytesRead, 0, (u8*)buffer, (u32)size);
-	if(ret)
-	{
-		printf("Failed to read manage.bin : %08lX\n", ret);
-		goto end;
-	}
-
-	Handle frduHandle = 0;
-	ret = srvGetServiceHandle(&frduHandle, "frd:u");
-	if(ret)
-	{
-		printf("Failed to get frd:u handle : %08lX\n", ret);
-		goto end;
-	}
-
-	u32 id = 0;
-	ret = GetMyPrincipalId(frduHandle, &id);
-
-	if(ret)
-	{
-		printf("Failed to get friend key : %08lX\n", ret);
-		svcCloseHandle(frduHandle);
-		goto end;
-	}
-
-	u32 nbEntries = buffer[LETTER_LIST_OFFSET/sizeof(u32)];
-
-	u32 entry[LETTER_ENTRY_LENGTH/sizeof(u32)] = {0};
-	memcpy(&entry[0x0/sizeof(u32)], "DOODBOMB", 0x8);
-	memset(&entry[0x10/sizeof(u32)], 0xFF, 0x8);
-	entry[0x18/sizeof(u32)] = id;
-	entry[0x24/sizeof(u32)] = 0x00010202;
-	entry[0x40/sizeof(u32)] = index;
-	entry[0x44/sizeof(u32)]= 0xFFFFFFFF;
-	ret = GetMyScreenName(frduHandle, (wchar_t*)&entry[0x28/sizeof(u32)]);
-	svcCloseHandle(frduHandle);
-
-	if(ret)
-	{
-		printf("Failed to get screen name : %08lX\n", ret);
-		goto end;
-	}
-
-	buffer[LETTER_LIST_OFFSET/sizeof(u32)] = nbEntries+1;
-	memcpy(&buffer[(LETTER_LIST_OFFSET + 0x40 + LETTER_ENTRY_LENGTH*nbEntries)/sizeof(u32)], entry, LETTER_ENTRY_LENGTH);
-
-	u32 checksum = crc32((unsigned char*)&buffer[LETTER_LIST_OFFSET/sizeof(u32)], ENTRIES_CHUNK_SIZE);
-	buffer[CHK_OFFSET/sizeof(u32)] = checksum;
-
-	u32 written = 0;
-	ret = FSFILE_Write(manageFile, &written, 0, buffer, size, FS_WRITE_FLUSH);
-	if(ret)
-		printf("Failed to write to manage.bin : %08lX\n", ret);
-
-	end:
+	error:
 	if(buffer) free(buffer);
 	FSFILE_Close(manageFile);
 	return ret;
@@ -201,6 +134,13 @@ Result copyLetter(FS_Archive archive, u32 index, char region[4])
 	char filename[24] = {0};
 	sprintf(filename, "/letter/0000/lt%04lu.bin", index);
 	FS_Path path = fsMakePath(PATH_ASCII, filename);
+	ret = FSUSER_DeleteFile(archive, path);
+	if(ret)
+	{
+		printf("Failed to delete letter in extdata:/letter/0000/ : %08lX\n", ret);
+		goto end;
+	}
+
 	ret = FSUSER_CreateFile(archive, path, 0, size);
 	if(ret)
 	{
@@ -226,34 +166,8 @@ Result copyLetter(FS_Archive archive, u32 index, char region[4])
 	return ret;
 }
 
-Result getRegionStr(u64 id, char *out)
+void install(char* region, u32 id)
 {
-	switch(id)
-	{
-		case 0x00040000001A2E00:
-			strcpy(out, "EUR");
-			break;
-		case 0x00040000001A2D00:
-			strcpy(out, "USA");
-			break;
-		case 0x00040000001A2C00:
-			strcpy(out, "JAP");
-			break;
-		default:
-			printf("Please launch this installer with Swapdoodle...\n");
-			return -1;
-	}
-	return 0;
-}
-
-int main()
-{
-	gfxInitDefault();
-	consoleInit(GFX_TOP, NULL);
-
-	u64 id = 0;
-	APT_GetProgramID(&id);
-
 	fsInit();
 	Result rc = romfsInit();
 	if (rc)
@@ -261,23 +175,16 @@ int main()
 	else
 	{
 		FS_Archive arch = 0;
-		u32 path[3] = {MEDIATYPE_SD, (id>>8)&0xFFFF, 0};
+		u32 path[3] = {MEDIATYPE_SD, id, 0};
 		rc = FSUSER_OpenArchive(&arch, ARCHIVE_EXTDATA, (FS_Path){PATH_BINARY, 0xC, path});
 		if(!rc)
 		{
-			char region[4];
-			rc = getRegionStr(id, region);
+			u32 index = 0;
+			rc = getEntryIndex(arch, &index);
+			printf("INDEX %lu\n", index);
 			if(!rc)
 			{
-				u32 index = 0;
-				rc = getEntryIndex(arch, &index);
-				printf("INDEX %lu\n", index);
-				if(!rc)
-				{
-					rc = copyLetter(arch, index, region);
-					if(!rc)
-						rc = addLetterEntry(arch, index);
-				}
+				rc = copyLetter(arch, index, region);
 			}
 		}
 		FSUSER_CloseArchive(arch);
@@ -287,6 +194,19 @@ int main()
 		printf("Doodlebomb has been successfully installed !\n");
 
 	printf("Press START to exit.\n");
+	romfsExit();
+	fsExit();
+}
+
+
+int main()
+{
+	gfxInitDefault();
+	consoleInit(GFX_TOP, NULL);
+
+	bool done = false;
+
+	printf("Press a button according to your region : (A)EUR, (X)USA, (Y)JAP\n");
 	// Main loop
 	while (aptMainLoop())
 	{
@@ -294,12 +214,25 @@ int main()
 		hidScanInput();
 
 		u32 kDown = hidKeysDown();
+		if (!done && kDown & KEY_A)
+		{
+		 	install("EUR", 0x1A2E);
+			done = true;
+		}
+		else if (!done && kDown & KEY_X)
+		{
+			install("USA", 0x1A2D);
+			done = true;
+		}
+		else if	(!done && kDown & KEY_Y)
+		{
+			install("JAP", 0x1A2C);
+			done = true;
+		}
 		if (kDown & KEY_START)
 			break; // break in order to return to hbmenu
 	}
 
-	romfsExit();
-	fsExit();
 	gfxExit();
 	return 0;
 }
