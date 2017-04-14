@@ -186,8 +186,12 @@ void install(char* region, u32 id)
 			{
 				rc = copyLetter(arch, index, region);
 			}
+			FSUSER_CloseArchive(arch);
 		}
-		FSUSER_CloseArchive(arch);
+		else
+		{
+			printf("Failed to open ExtData, are you sure you started the game at least once and/or chose the right region?\n");
+		}
 	}
 
 	if(!rc)

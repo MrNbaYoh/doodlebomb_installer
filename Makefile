@@ -33,6 +33,8 @@ SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
 ROMFS		:=	romfs
+APP_TITLE	:= Doodlebomb installer
+APP_AUTHOR	:= MrNbaYoh
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -110,8 +112,8 @@ ifeq ($(strip $(ICON)),)
 	ifneq (,$(findstring $(TARGET).png,$(icons)))
 		export APP_ICON := $(TOPDIR)/$(TARGET).png
 	else
-		ifneq (,$(findstring icon.png,$(icons)))
-			export APP_ICON := $(TOPDIR)/icon.png
+		ifneq (,$(findstring launcher.png,$(icons)))
+			export APP_ICON := $(TOPDIR)/launcher.png
 		endif
 	endif
 else
