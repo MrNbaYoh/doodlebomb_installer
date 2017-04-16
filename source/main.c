@@ -75,7 +75,7 @@ Result getEntryIndex(FS_Archive archive, u32 *index)
 	if(!ret)
 	{
 		buf = (u64*)&buffer[LETTER_LIST_OFFSET/sizeof(u32)];
-		nb = buf[0];
+		nb = buf[0]; // number of letters
 		if(nb == 0)
 		{
 			printf("No letter found! Please create a letter before trying to install doodlebomb!\n");
@@ -86,19 +86,38 @@ Result getEntryIndex(FS_Archive archive, u32 *index)
 		u64 max = 0;
 		u32 id = 0;
 
-		for(int i = 0; i < nb; i++)
+		for(int i = 0; i < nb; i++) // for each letter
 		{
-			u64 current = swap_u64(buf[0x8 + i*0x10 + 0x2]);
-			//printf("%16llX\n", current);
-			if(current > max)
+			// printf("i: %08lX, nb: %08lX\n", (u32)i, nb);
+			/* 
+			current is a metadata field of the letter
+			its byte format after swap is:
+			11040F122A29250E hex from Nikki
+			1704151842413714
+
+			11040F1230170309 hex from friend
+			1704151848230309 dec
+
+			11041007241B0B0E hex from Nikki
+			1704160736271114 dec
+
+			1104100725010000 hex my own
+			1704160737010000 dec
+
+			year mth day hour min sec ?? from
+			 */
+			u64 current = swap_u64(buf[0x8 + i*0x10 + 0x2]); // change endian
+			// printf("cu: %16llX\n", current);
+			if(current != 0xFFFFFFFFFFFFFFFFULL && current > max) // find maximum other than a received doodlebomb
 			{
 				max = current;
-				id = (u32)buf[0x8 + i*0x10 + 0x8];
-				//printf("%08lX\n", id);
+				id = (u32)buf[0x8 + i*0x10 + 0x8]; 
+				// printf("cu: %16llX, id: %08lX\n", current, id);
 			}
 		}
 
-		*index = id;
+		*index = id; // index points to latest normal letter
+		// printf("index: %08lX\n", id);
 	}
 
 	error:
