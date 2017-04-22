@@ -241,7 +241,7 @@ int main()
 
 	bool done = false;
 
-	printf("Press a button according to your region : (A)EUR, (X)USA, (Y)JAP\n");
+	printf("Press a button according to your region : (A)EUR, (X)USA, (Y)JPN\n");
 	// Main loop
 	while (aptMainLoop())
 	{
